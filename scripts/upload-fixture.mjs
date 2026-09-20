@@ -1,0 +1,10 @@
+import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+const run=js=>execFileSync('node',['scripts/chrome.mjs',js],{encoding:'utf8',maxBuffer:4e6});
+const target=process.argv[2];
+if(!target||!/^\d+$/.test(target))throw Error('Pass the intended Instagram conversation ID explicitly.');
+if(!run('location.pathname').includes(`/direct/t/${target}`))throw Error('Open the specified conversation first.');
+const video=readFileSync('apps/web/static/fixture.mp4').toString('base64');
+run('window.__usFixture="";"ready"');
+for(let i=0;i<video.length;i+=40000)run(`window.__usFixture+=${JSON.stringify(video.slice(i,i+40000))};"chunk"`);
+console.log(run(`(()=>{if(location.pathname!=="/direct/t/${target}/")throw Error("Conversation changed");const input=document.querySelector('input[type=file][accept*=mp4]');if(!input)throw Error("Upload input missing");const bytes=Uint8Array.from(atob(window.__usFixture),c=>c.charCodeAt(0));const dt=new DataTransfer();dt.items.add(new File([bytes],"us-upload-test-flower.mp4",{type:"video/mp4"}));input.files=dt.files;input.dispatchEvent(new Event("change",{bubbles:true}));delete window.__usFixture;return "Fixture selected in Instagram"})()`));

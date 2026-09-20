@@ -1,0 +1,30 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+const browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:950}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+try{
+ await page.goto('http://127.0.0.1:5173',{waitUntil:'networkidle'});
+ assert.equal(await page.locator('.us-card').count(),0);
+ await page.getByRole('button',{name:'Make this us',exact:true}).click();
+ assert.equal(await page.getByRole('textbox',{name:'Instagram message'}).inputValue(),'/us Make this us');
+ await page.getByRole('button',{name:'Cancel reply',exact:true}).click();
+ await page.getByRole('textbox',{name:'Instagram message'}).fill('/us Imagine us in Tokyo');
+ await page.getByRole('textbox',{name:'Instagram message'}).press('Enter');
+ await page.getByRole('status').filter({hasText:'Generating…'}).waitFor();
+ await page.getByText('Prerecorded demo · not AI generated',{exact:true}).waitFor({timeout:10000});
+ await page.locator('.sent-video video').evaluate(v=>v.play());await page.waitForTimeout(300);assert(await page.locator('.sent-video video').evaluate(v=>v.currentTime>0));
+ await page.getByRole('button',{name:'Continue',exact:true}).click();
+ assert.equal(await page.getByRole('textbox',{name:'Instagram message'}).inputValue(),'/us What happens next?');
+ await page.getByRole('button',{name:'Photo setup',exact:true}).click();
+ const png=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=300;canvas.getContext('2d').fillRect(0,0,300,300);return canvas.toDataURL('image/png').split(',')[1]});
+ await page.locator('input[type=file]').setInputFiles({name:'test.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+ await page.getByRole('button',{name:'Yes, that’s me'}).click();
+ await page.getByRole('button',{name:'Settings',exact:true}).click();
+ assert(await page.getByText('Your photo is saved',{exact:true}).isVisible());
+ assert(await page.getByText('Change photo',{exact:true}).isVisible());
+ await page.getByRole('button',{name:'Close Us settings'}).click();
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.screenshot({path:'artifacts/frontend-native-mobile.png'});
+ assert.deepEqual(errors,[]);console.log('Preview passed: native shortcuts, /us, automatic fixture result, playback, one-time photo, optional change, mobile layout.');
+}finally{await browser.close()}

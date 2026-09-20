@@ -1,0 +1,1 @@
+Supabase public root CA, downloaded over HTTPS from https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt. This is a public certificate, not a private key. Used alongside system CAs with hostname/certificate verification enabled. See https://supabase.com/docs/guides/platform/ssl-enforcement.

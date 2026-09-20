@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+process.env.HONCHO_API_KEY='';process.env.SEEDANCE_API_KEY='';
+const service=await import('../apps/web/src/lib/server/service');
+const pair={conversationId:'one',sender:{id:'alice',name:'Alice',username:'alice'},recipient:{id:'bob',name:'Bob',username:'bob'}};
+test('confirmed photo survives refresh, memory reset and opening another pair; never becomes the friend photo',async()=>{
+ await service.configurePair(pair);
+ assert.equal(service.getSetup('one').photoConfirmed,false);
+ await assert.rejects(()=>service.savePhoto('one','bob','true',new File(['fixture'],'test.png',{type:'image/png'})),/logged-in participant/);
+ const result=await service.savePhoto('one','alice','true',new File(['fixture'],'test.png',{type:'image/png'}));
+ assert.equal(result.photoConfirmed,true);assert.equal(service.getSetup('one').photoUrl,result.photoUrl);
+ await service.resetHistory('one');assert.equal(service.getSetup('one').photoConfirmed,true);
+ await service.configurePair({...pair,conversationId:'two',recipient:{id:'charlie',username:'charlie',name:'Charlie'}});
+ assert.equal(service.getSetup('two').photoUrl,result.photoUrl);
+ await service.configurePair({conversationId:'three',sender:pair.recipient,recipient:pair.sender});
+ assert.equal(service.getSetup('three').photoConfirmed,false);
+ await service.savePhoto('one','bob','true',new File(['friend fixture'],'friend.png',{type:'image/png'}),'chat');
+ assert.equal(service.getSetup('one').recipientPhotoConfirmed,true);
+ assert.equal(service.getSetup('one').photoUrl,result.photoUrl,'Friend selection cannot replace the sender photo');
+ assert.equal(service.getSetup('three').photoConfirmed,false,'A demo selection is not self-confirmation');
+ await service.configurePair({...pair,conversationId:'four'});
+ assert.equal(service.getSetup('four').recipientPhotoConfirmed,false,'Demo friend photos are scoped to their chat');
+ await assert.rejects(()=>service.savePhoto('one','stranger','true',new File(['fixture'],'test.png',{type:'image/png'}),'chat'),/logged-in participant/);
+ const store=await import('../apps/web/src/lib/server/store');
+ assert(store.confirmedPhoto('alice')?.confirmedAt);assert.equal(store.confirmedPhoto('bob'),undefined);
+});

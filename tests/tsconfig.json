@@ -1,0 +1,1 @@
+{"compilerOptions":{"paths":{"$lib":["../apps/web/src/lib"],"$lib/*":["../apps/web/src/lib/*"],"@us/shared/*":["../packages/shared/src/*"],"@us/ui/*":["../packages/ui/src/*"]}}}

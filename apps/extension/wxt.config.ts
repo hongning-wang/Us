@@ -1,0 +1,3 @@
+import { defineConfig } from 'wxt';
+import { fileURLToPath } from 'node:url';
+export default defineConfig({ modules: ['@wxt-dev/module-svelte'], alias: { '@us/ui': fileURLToPath(new URL('../../packages/ui/src', import.meta.url)), '@us/shared': fileURLToPath(new URL('../../packages/shared/src', import.meta.url)) }, manifest: { name: 'Us — imagine together', description: 'Turn your shared stories into something you can watch together.', permissions: ['storage','scripting'], host_permissions: ['https://www.instagram.com/*','https://*.cdninstagram.com/*','https://*.fbcdn.net/*',new URL(process.env.VITE_US_API_BASE||'http://127.0.0.1:5173').origin+'/*'], version: '0.1.0' } });
