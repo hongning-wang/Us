@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { CreateJob, Job } from '@us/shared/types';
 import { CodexError, generateSpec, type SpecInput } from './codex';
 import { env } from './env';
+import { validateMedia } from './validate-media';
 import { Honcho, memoryContext, noteImagined } from './honcho';
 import { ensureFallbackMedia, FALLBACK_FILENAME, mediaInfo, putMedia, publicMediaUrl, videoFilename } from './media';
 import { downloadMedia, ProviderError, SeedanceProvider, type CreateTaskInput, type TaskStatus } from './seedance';
@@ -42,14 +43,7 @@ export interface JobDeps {
 
 function realDeps(): JobDeps {
 	return {
-  async validateMedia(input){
-   for(const [kind,urls] of [['image',input.imageUrls],['video',input.videoUrls]] as const){
-    for(const url of urls||[]){
-     const response=await fetch(url,{method:'HEAD',signal:AbortSignal.timeout(15000)});
-     if(!response.ok||!response.headers.get('content-type')?.startsWith(kind+'/'))throw new Error(`The ${kind} reference is not publicly readable. Check the media connection before retrying.`);
-    }
-   }
-  },
+  validateMedia,
 		async getMemory(conversationId) {
 			if (!Honcho.available()) throw new Error('Shared memory is not connected.');
 			const pair = getPair(conversationId);

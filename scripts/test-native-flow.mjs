@@ -186,6 +186,15 @@ assert.equal(await page.getByRole('alert').count(),0,'Unavailable Instagram phot
 assert.equal(await page.locator('us-setup .photos').count(),0,'Unusable suggestions are hidden');
 assert.equal(await page.locator('us-setup .primary.upload').count(),1,'Low-resolution profile photos prompt for upload');
 assert.equal(await page.locator('us-setup .preview').count(),0);
+// These words in an ordinary DM must remain text, never start generation.
+await page.getByRole('button',{name:'Close Us settings'}).click();
+const createsBeforeText=mock.state.creates.length;
+const sendsBeforeText=await page.evaluate(()=>fixtureState.nativeSends);
+await page.getByRole('textbox').fill('Make this us');
+await page.getByRole('button',{name:'Send',exact:true}).click();
+assert.equal(await page.evaluate(()=>fixtureState.nativeSends),sendsBeforeText+1);
+assert.equal(mock.state.creates.length,createsBeforeText);
+assert.equal(await page.getByRole('textbox').innerText(),'');
 assert.deepEqual(errors,[]);
 console.log((ios?'iOS extension adapter (WebKit)':'Chrome extension')+' passed: unchanged composer, /us intercept, fresh scene, exact Reel, own-video continuation, automatic native upload/send once each, one-tap Share → edited video, Original link, refresh without duplicate generation/delivery, no result card.');
 }catch(error){for(const p of browser.contexts().flatMap(c=>c.pages())){console.error(await p.evaluate(()=>({errors:window.fixtureState?.jobs?.map(j=>({status:j.status,error:j.error})),images:[...document.querySelector('us-setup')?.shadowRoot?.querySelectorAll('img')||[]].map(i=>({src:i.src,width:i.naturalWidth,complete:i.complete}))})));await p.screenshot({path:'artifacts/ios-extension-failure.png'})}throw error;}finally{await browser.close();await mock.close();}
