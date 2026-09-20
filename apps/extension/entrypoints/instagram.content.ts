@@ -5,6 +5,7 @@ import {mount,unmount} from 'svelte';
 import SetupPanel from '../../../packages/ui/src/PhotoSetup.svelte';
 import {resolveSharePair,selectedShareTiles,shareSendButton} from '../src/chat-context';
 import {actionContent,buttonStyles} from '../src/buttons';
+import {originalReelUrl,ownVideoMessageId} from '../src/references';
 import {createBridge,observeMessages} from '../src/bridge';
 import {detectPair,composer,conversationId,scrollContainer,messageArticles,referenceFor,captureReplyReference,resolveReference,activeReelReference,fetchReelVideoUrl,type CapturedReference} from '../src/instagram';
 import type {Pair,Reference,Job,CreateJob} from '../../../packages/shared/src/types';
@@ -13,7 +14,8 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
  let currentPair:Pair|undefined=detectPair();
  let panel:ReturnType<typeof mount>|undefined;
  let pendingReply:Reference|undefined,pendingArticle:HTMLElement|undefined,capturedReply:CapturedReference|undefined;
- let request:CreateJob|undefined,active:Job|undefined;
+ type PendingRequest=CreateJob&{autoShare?:boolean};
+ let request:PendingRequest|undefined,active:Job|undefined;let knownJobs:Job[]=[];
  let capturing=false,submitting=false,polling=false,nativeSending=false;
  let deliveryBlockedId='',lastConversation=conversationId(),restoredContext='';
  const historyChecked=new Set<string>();
@@ -94,7 +96,8 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
    }
    if(captured.reference&&!captured.reference.url)throw Error('The selected video wasn’t attached. Select the video again.');
    showGeneration('Generating…');
-   const created=await bridge.createJob(captured);
+   const {autoShare,...payload}=captured;
+   const created=await bridge.createJob(payload);
    if(request===captured)request=undefined;
    await browser.storage.local.remove('us:request:'+captured.sender.id+':'+captured.conversationId);
    if(conversationId()!==captured.conversationId)return;
@@ -105,10 +108,10 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
  }
  async function retry(){if(!active||!currentPair)return;try{if(active.status!=='ready')active=await createBridge(currentPair).retryJob(active.id);deliveryBlockedId='';renderJob()}catch(e){show((e as Error).message,[['Check again',()=>void retry()]],true)}}
  async function autoSend(){
-  if(!active||nativeSending||active.id===deliveryBlockedId)return;
+  if(!active||nativeSending||active.id===deliveryBlockedId||!composer())return;
   if(composer()?.innerText.trim()||[...document.querySelectorAll('[aria-label^="Remove attachment:"]')].some(e=>e.getAttribute('aria-label')!=='Remove attachment: us-'+active!.id+'.mp4')){generation.remove();show('Video ready. Finish your current message first.');return;}
   const job=active;nativeSending=true;showGeneration(job.isFallback?'Sending prerecorded demo…':'Sending…');
-  try{const delivered=await createBridge(job).sendJob(job);if(active?.id===job.id){active=delivered;renderJob()}}
+  try{const delivered=await createBridge(job).sendJob(job);knownJobs=[delivered,...knownJobs.filter(j=>j.id!==delivered.id)];if(active?.id===job.id){active=delivered;renderJob()}scan()}
   catch(e){generation.remove();deliveryBlockedId=job.id;show((e as Error).message,[['Retry',()=>void retry()]],true)}
   finally{nativeSending=false}
  }
@@ -149,15 +152,21 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
   if((event.target as HTMLElement).closest('[aria-label="Cancel reply"]')){pendingArticle=undefined;capturedReply=undefined;pendingReply=undefined;}
  }
  document.addEventListener('click',captureReply,true);window.addEventListener('keydown',intercept,true);window.addEventListener('click',intercept,true);
+ function actionsFor(article:HTMLElement){let row=article.querySelector<HTMLElement>('[data-us-actions]');if(!row){row=document.createElement('div');row.dataset.usActions='';article.append(row)}return row}
  function scan(){
-  const id=conversationId();const detected=detectPair();if(lastConversation!==id||(detected&&currentPair&&detected.sender.id!==currentPair.sender.id)){lastConversation=id;restoredContext='';currentPair=detectPair();request=undefined;pendingReply=undefined;pendingArticle=undefined;capturedReply=undefined;active=undefined;deliveryBlockedId='';status.hidden=true;generation.remove();closePanel();}
+  const id=conversationId();const detected=detectPair();if(lastConversation!==id||(detected&&currentPair&&detected.sender.id!==currentPair.sender.id)){lastConversation=id;restoredContext='';currentPair=detectPair();request=undefined;pendingReply=undefined;pendingArticle=undefined;capturedReply=undefined;active=undefined;knownJobs=[];deliveryBlockedId='';status.hidden=true;generation.remove();closePanel();}
   if(!currentPair&&id)currentPair=detectPair();
   for(const article of id?messageArticles():[]){
+   if(!article.querySelector('[data-us-action="original"]')){
+    const edited=knownJobs.find(j=>j.deliveryMessageId&&j.deliveryMessageId===ownVideoMessageId(article,j.sender));
+    const source=edited&&originalReelUrl(edited,knownJobs);
+    if(source){const link=document.createElement('a');link.dataset.usAction='original';link.href=source;link.textContent='Original';link.title='Open the original Reel';actionsFor(article).append(link)}
+   }
    if(article.querySelector('[data-us-action="reference"]'))continue;
    const ref=referenceFor(article,currentPair?.sender);if(!ref)continue;
    const button=document.createElement('button');button.dataset.usAction='reference';actionContent(button,ref.kind==='reel'?'reel':'reply');
    button.onclick=event=>{event.stopPropagation();const nativeReply=article.closest('[role=group][tabindex="-1"]')?.querySelector<HTMLElement>('[aria-label^="Reply to message from"]');nativeReply?.click();pendingArticle=article;capturedReply=captureReplyReference(article,currentPair?.sender);pendingReply=capturedReply?.reference||ref;setTimeout(()=>prime(ref.kind==='reel'?'Make this us':'What happens next?'),50);};
-   article.append(button);
+   actionsFor(article).append(button);
   }
   attachStatus();
   if(currentPair){const key=currentPair.sender.id+':'+currentPair.conversationId;if(restoredContext!==key){restoredContext=key;void restoreChat().catch(e=>show((e as Error).message,[],true));}}
@@ -169,7 +178,7 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
     button=document.createElement('button');button.dataset.usAction='share';actionContent(button,'share');
     const action=button;
     action.onclick=async(event)=>{
-     event.stopPropagation();
+     event.preventDefault();event.stopPropagation();
      if(action.dataset.busy)return;action.dataset.busy='true';action.disabled=true;
      const selectedName=selectedShareTiles(dialog)[0]?.innerText;const reelPath=location.pathname;
      try{
@@ -177,7 +186,8 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
       const reference=await activeReelReference();
       if(location.pathname!==reelPath||selectedShareTiles(dialog).length!==1||selectedShareTiles(dialog)[0]?.innerText!==selectedName)throw Error('Selection changed. Tap Make this us again.');
       const instruction=dialog.querySelector<HTMLInputElement>('input[name="shareCommentText"]')?.value.trim()||'Make this us';
-      await browser.storage.local.set({'us:selected-reel':{pair,reference,instruction}});
+      const selected:PendingRequest={...pair,reference,instruction,idempotencyKey:crypto.randomUUID(),autoShare:true};
+      await browser.storage.local.set({['us:request:'+pair.sender.id+':'+pair.conversationId]:selected});
       location.href='/direct/t/'+encodeURIComponent(pair.conversationId)+'/';
      }catch(e){action.textContent=(e as Error).message;delete action.dataset.busy;action.disabled=false;}
     };
@@ -190,23 +200,15 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
  async function poll(){
   if(polling||submitting||!currentPair||conversationId()!==currentPair.conversationId)return;polling=true;
   const pair=currentPair;
-  try{const jobs=await createBridge(pair).listJobs();if(conversationId()!==pair.conversationId)return;const next=active?jobs.find(j=>j.id===active?.id):jobs.find(j=>j.status!=='sent'&&!dismissed.has(j.id));if(next){active=next;renderJob()}}catch{}finally{polling=false}
+  try{const jobs=await createBridge(pair).listJobs();if(conversationId()!==pair.conversationId)return;knownJobs=jobs;const next=active?jobs.find(j=>j.id===active?.id):jobs.find(j=>j.status!=='sent'&&!dismissed.has(j.id));if(next){active=next;renderJob()}}catch{}finally{polling=false}
  }
  const interval=setInterval(()=>{scan();void poll()},2000);let syncing=false;
  const syncInterval=setInterval(async()=>{if(!currentPair||syncing)return;syncing=true;try{await observeMessages(currentPair)}catch{}finally{syncing=false}},8000);
  scan();void poll();
  async function restoreChat(){
   const pair=currentPair;if(!pair||conversationId()!==pair.conversationId)return;
-  const selected=(await browser.storage.local.get('us:selected-reel'))['us:selected-reel'] as {pair:Pair;reference:Reference;instruction?:string}|undefined;
-  if(selected?.pair.sender.username===pair.sender.username&&selected.pair.recipient.username===pair.recipient.username&&selected.pair.conversationId===pair.conversationId){
-   const existing=(await createBridge(pair).listJobs()).find(j=>j.reference?.kind==='reel'&&j.reference.mediaId===selected.reference.mediaId&&['generating','ready','sending'].includes(j.status));
-   if(conversationId()!==pair.conversationId)return;
-   await browser.storage.local.remove('us:selected-reel');
-   if(existing){active=existing;renderJob();}
-   else{pendingReply=selected.reference;if(composer()&&!composer()!.innerText.trim())prime(selected.instruction||'Make this us');}
-  }
-  const saved=(await browser.storage.local.get('us:request:'+pair.sender.id+':'+pair.conversationId))['us:request:'+pair.sender.id+':'+pair.conversationId] as CreateJob|undefined;
-  if(saved&&conversationId()===pair.conversationId){request=saved;show('Continue your video idea?',[['Continue',()=>void submitRequest()]],true);return;}
+  const saved=(await browser.storage.local.get('us:request:'+pair.sender.id+':'+pair.conversationId))['us:request:'+pair.sender.id+':'+pair.conversationId] as PendingRequest|undefined;
+  if(saved&&conversationId()===pair.conversationId){request=saved;if(saved.autoShare){await submitRequest();return;}show('Continue your video idea?',[['Continue',()=>void submitRequest()]],true);return;}
   const bridge=createBridge(pair);let setup=await bridge.getSetup();
   const stillHere=()=>currentPair?.sender.id===pair.sender.id&&conversationId()===pair.conversationId;
   if(!stillHere())return;
@@ -217,5 +219,5 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
   show('Your photo is saved · '+memoryLabel,[['Settings',()=>openSetup(pair,true)]],true);
  }
 
- ctx.onInvalidated(()=>{clearInterval(interval);clearInterval(syncInterval);document.removeEventListener('click',captureReply,true);window.removeEventListener('keydown',intercept,true);window.removeEventListener('click',intercept,true);document.querySelectorAll('[data-us-action]').forEach(e=>e.remove());document.querySelectorAll('[data-us-share-footer]').forEach(e=>e.removeAttribute('data-us-share-footer'));status.remove();generation.remove();style.remove();closePanel();ui.remove();});
+ ctx.onInvalidated(()=>{clearInterval(interval);clearInterval(syncInterval);document.removeEventListener('click',captureReply,true);window.removeEventListener('keydown',intercept,true);window.removeEventListener('click',intercept,true);document.querySelectorAll('[data-us-action],[data-us-actions]').forEach(e=>e.remove());document.querySelectorAll('[data-us-share-footer]').forEach(e=>e.removeAttribute('data-us-share-footer'));status.remove();generation.remove();style.remove();closePanel();ui.remove();});
 }});

@@ -21,7 +21,11 @@ export async function startMockApi({port=5175,delayMs=600}={}) {
   const json=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
   try {
    const chunks=[];for await(const chunk of req)chunks.push(chunk);
-   const raw=Buffer.concat(chunks).toString();const body=raw?JSON.parse(raw):{};
+   const bytes=Buffer.concat(chunks);let body={};
+   if(req.headers['content-type']?.startsWith('multipart/form-data')){
+    const form=await new Request(url,{method:'POST',headers:{'Content-Type':req.headers['content-type']},body:bytes}).formData();
+    const file=form.get('file');body={fields:Object.fromEntries([...form].filter(([key])=>key!=='file')),upload:{data:Buffer.from(await file.arrayBuffer()).toString('base64'),type:file.type}};
+   }else if(bytes.length)body=JSON.parse(bytes.toString());
    if(url.pathname==='/__mock')return json({mock:true,creates,jobs,deliveryPosts});
    if(url.pathname==='/api/setup'){
     if(req.method==='POST'){const next={...setup,pair:body,photoConfirmed:photos.has(body.sender.id),recipientPhotoConfirmed:false,importedCount:0};setups.set(body.conversationId,next);return json(next);}
@@ -53,6 +57,11 @@ export async function startMockApi({port=5175,delayMs=600}={}) {
     creates.push(body);jobs.unshift(job);keys.set(key,job);
     setTimeout(()=>Object.assign(job,{status:'ready',phase:'deliver',outputUrl:'/api/media/fixture.mp4'}),delayMs).unref();
     return json(job);
+   }
+   const action=url.pathname.match(/^\/api\/jobs\/([^/]+)\/(retry|fallback)$/);
+   if(action&&req.method==='POST'){
+    const job=jobs.find(j=>j.id===action[1]);if(!job)return json({error:'Unknown mock job'},404);
+    Object.assign(job,{status:'ready',error:undefined,outputUrl:'/api/media/fixture.mp4',isFallback:action[2]==='fallback'});return json(job);
    }
    const delivery=url.pathname.match(/^\/api\/jobs\/([^/]+)\/delivery$/);
    if(delivery&&req.method==='POST'){

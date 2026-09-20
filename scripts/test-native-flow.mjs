@@ -3,22 +3,26 @@ import {compile} from 'svelte/compiler';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {dirname} from 'node:path';
-import {chromium} from 'playwright';
+import {chromium,webkit} from 'playwright';
+import {buildIOSScript} from './build-ios-extension.mjs';
+const ios=process.env.US_IOS==='1';
 import assert from 'node:assert/strict';
 import {startMockApi} from './mock-api.mjs';
 const mock=await startMockApi({port:0});
-const bundle=await build({entryPoints:['apps/extension/entrypoints/instagram.content.ts'],bundle:true,write:false,define:{'import.meta.env':'{}'},format:'iife',globalName:'UsNative',conditions:['browser'],plugins:[{name:'fixture-platform',setup(b){
+const bundle=ios?{outputFiles:[{text:await buildIOSScript(mock.baseUrl,false)}]}:await build({entryPoints:['apps/extension/entrypoints/instagram.content.ts'],bundle:true,write:false,define:{'import.meta.env':'{}'},format:'iife',globalName:'UsNative',conditions:['browser'],plugins:[{name:'fixture-platform',setup(b){
  b.onResolve({filter:/^wxt\//},args=>({path:args.path,namespace:'fixture'}));
  b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:args.path==='wxt/browser'?'export const browser=window.fixtureBrowser':args.path.includes('define-content-script')?'export const defineContentScript=x=>x':'export async function createShadowRootUi(ctx,options){const host=document.createElement(options.name);document.body.append(host);const root=host.attachShadow({mode:"open"});const container=document.createElement("div");root.append(container);return {uiContainer:container,mount(){},remove(){host.remove()}}}',loader:'js'}));
  b.onLoad({filter:/\.svelte$/},args=>({contents:compile(readFileSync(args.path,'utf8'),{filename:args.path,generate:'client',css:'injected'}).js.code,loader:'js',resolveDir:dirname(args.path)}));
 }}]});
-const browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+const browser=ios?await webkit.launch():await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
 try {
-const page=await browser.newPage();page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
+const page=await browser.newPage(ios?{viewport:{width:390,height:844}}:{});page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
 let account='me';const photoLookups=[];
 await page.exposeBinding('photoLookup',(_,username)=>photoLookups.push(username));
 await page.route('**/*',route=>{
  const url=new URL(route.request().url());
+ if(['blob:','data:'].includes(url.protocol))return route.continue();
+ if(ios&&url.pathname==='/api/v1/users/web_profile_info/'){const username=url.searchParams.get('username');photoLookups.push(username);return route.fulfill({json:{data:{user:{username,has_profile_pic:username!=='no_photo_user',profile_pic_url:'https://cdninstagram.com/'+username+'.jpg'}}}});}
  if(url.pathname==='/api/v1/direct_v2/inbox/')return route.fulfill({json:{viewer:{username:account,full_name:account},inbox:{threads:[{thread_v2_id:'2',thread_title:'Other Friend',users:[{username:'otherfriend',full_name:'Other Friend',profile_pic_url:'https://cdninstagram.com/other.jpg'}]},{thread_v2_id:'1',thread_title:'Friend',users:[{username:'friend',full_name:'Friend',profile_pic_url:'https://cdninstagram.com/friend.jpg'}]}]}}});
  if(url.pathname==='/api/v1/media/3955307914729904366/info/')return route.fulfill({json:{items:[{id:'3955307914729904366_123',video_duration:14,video_versions:[{url:'https://scontent.cdninstagram.com/v/selected.mp4',width:720,height:1280}]}]}});
  if(route.request().resourceType()!=='document')return route.abort();
@@ -28,7 +32,7 @@ await page.route('**/*',route=>{
 await page.exposeBinding('mockRequest',async(_, {path,method,body,binary})=>{
  const response=await fetch(mock.baseUrl+path,{method:method||'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
  if(!response.ok)throw Error('Mock API '+response.status);
- return binary?Buffer.from(await response.arrayBuffer()).toString('base64'):response.json();
+ return binary?{data:Buffer.from(await response.arrayBuffer()).toString('base64'),mime:response.headers.get('content-type')}:response.json();
 });
 const storage={'us:pair':{conversationId:'test',sender:{id:'me',username:'me',name:'Me'},recipient:{id:'friend',username:'friend',name:'Friend'}}};
 await page.exposeBinding('mockStorage',(_,action,value)=>{if(action==='get')return {[value]:storage[value]};if(action==='set')Object.assign(storage,value);if(action==='remove')delete storage[value];});
@@ -45,14 +49,19 @@ const initialize=()=>{
   if(path==='/api/jobs'&&method==='POST'){state.creates.push(body);state.jobs.unshift(data);}
   if(path.startsWith('/api/jobs?'))state.jobs=data;
   if(path.endsWith('/delivery')){state.deliveryPosts.push(body);state.jobs=state.jobs.map(j=>j.id===data.id?data:j);}
-  return {data};
+  return binary?data:{data};
  }}};
  // Instagram may consume Enter at document capture; Us must intercept earlier.
  document.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopImmediatePropagation();}},true);
  const input=document.querySelector('input[type=file]');input.addEventListener('change',()=>{state.uploads.push(input.files[0]);const remove=document.createElement('button');remove.setAttribute('aria-label','Remove attachment: '+input.files[0].name);remove.onclick=()=>remove.remove();document.querySelector('#row').append(remove);});
  document.querySelector('[aria-label=Send]').addEventListener('click',()=>{const viewer=document.querySelector('nav a').getAttribute('href').split('/')[1];state.nativeSends++;document.querySelector('[aria-label^="Remove attachment:"]')?.remove();document.querySelector('#messages').insertAdjacentHTML('beforeend','<div role="group" tabindex="-1"><button aria-label="Reply to message from '+viewer+'">Reply</button><article role="article" aria-roledescription="message"><img src="https://www.instagram.com/images/playButton.png" width="45"><img src="https://cdninstagram.com/sent-video.jpg" width="236"></article></div>');document.querySelector('[contenteditable]').textContent='';});
 };
-const mount=async()=>{await page.evaluate(initialize);await page.addScriptTag({content:bundle.outputFiles[0].text});await page.evaluate(()=>UsNative.default.main({onInvalidated(){}}));};
+const mount=async()=>{await page.evaluate(initialize);
+ if(ios)await page.evaluate(()=>{Object.defineProperty(window,'webkit',{configurable:true,value:{messageHandlers:{us:{postMessage:message=>{
+  if(message.type==='storage')return window.mockStorage(message.action,message.action==='set'?message.values:message.key);
+  return window.fixtureBrowser.runtime.sendMessage(message);
+ }}}}})});
+ await page.addScriptTag({content:bundle.outputFiles[0].text});if(!ios)await page.evaluate(()=>UsNative.default.main({onInvalidated(){}}));};
 await page.goto('https://www.instagram.com/direct/t/test/');
 await mount();
 assert.equal(await page.locator('[data-us-action=composer]').count(),0);
@@ -100,6 +109,9 @@ assert.equal(await page.evaluate(()=>fixtureState.creates.length),3);
 assert.equal(mock.state.creates.length,3);
 assert.equal(mock.state.deliveryPosts.filter(p=>p.status==='sent').length,3);
 assert.equal(mock.state.creates[2].reference.url,'https://scontent.cdninstagram.com/v/selected.mp4');
+await page.getByRole('link',{name:'Original',exact:true}).waitFor();
+assert.equal(await page.getByRole('link',{name:'Original',exact:true}).getAttribute('href'),'https://www.instagram.com/reel/DbkE5eixFju/');
+assert.equal(await page.getByRole('link',{name:'Original',exact:true}).count(),1,'Fresh text videos have no invented original');
 // The actual Share shortcut carries the selection across navigation.
 await page.goto('https://www.instagram.com/reels/DbkE5eixFju/');
 await mount();
@@ -110,9 +122,7 @@ assert.equal(await page.locator('#share-footer [data-us-action=share]').count(),
 await page.locator('[data-us-action=share]').click();
 await page.waitForURL('**/direct/t/2/');
 await mount();
-await page.waitForFunction(()=>document.querySelector('[contenteditable]').innerText==='/us Keep this dance');
-assert.equal(await page.getByRole('textbox').evaluate(e=>document.activeElement===e),true);
-await page.getByRole('textbox').press('Enter');
+assert.equal(await page.getByRole('textbox').innerText(),'','Share starts without priming or submitting the composer');
 await page.getByRole('button',{name:'Skip for now',exact:true}).click();
 await page.waitForFunction(()=>fixtureState.creates.length===1);
 assert.equal(mock.state.creates.length,4);
@@ -120,11 +130,14 @@ assert.equal(mock.state.creates[3].conversationId,'me:2');
 assert.equal(mock.state.creates[3].recipient.username,'otherfriend');
 assert.equal(mock.state.creates[3].instruction,'Keep this dance');
 assert.equal(mock.state.creates[3].reference.url,'https://scontent.cdninstagram.com/v/selected.mp4');
+assert.equal(await page.getByRole('textbox').innerText(),'');
 // Refresh while the request is running: recover the same job and send it once.
 await page.reload();await mount();
 await page.waitForFunction(()=>fixtureState.jobs.some(j=>j.id==='fixture-job-4'&&j.status==='sent'));
 assert.equal(mock.state.creates.length,4);
 assert.equal(mock.state.deliveryPosts.filter(p=>p.jobId==='fixture-job-4'&&p.status==='sent').length,1);
+await page.getByRole('link',{name:'Original',exact:true}).waitFor();
+assert.equal(await page.getByRole('link',{name:'Original',exact:true}).getAttribute('href'),'https://www.instagram.com/reel/DbkE5eixFju/');
 assert.equal(await page.locator('[data-us-generation]').count(),0);
 assert.equal(await page.getByRole('textbox').innerText(),'');
 const uploadedHash=await page.evaluate(async()=>{const hash=await crypto.subtle.digest('SHA-256',await fixtureState.uploads[0].arrayBuffer());return Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');});
@@ -174,5 +187,5 @@ assert.equal(await page.locator('us-setup .photos').count(),0,'Unusable suggesti
 assert.equal(await page.locator('us-setup .primary.upload').count(),1,'Low-resolution profile photos prompt for upload');
 assert.equal(await page.locator('us-setup .preview').count(),0);
 assert.deepEqual(errors,[]);
-console.log('Native flow passed: unchanged composer, /us intercept, fresh scene, exact Reel, own-video continuation, automatic native upload/send once each, Share → DM, refresh without duplicate generation/delivery, no result card.');
-}finally{await browser.close();await mock.close();}
+console.log((ios?'iOS extension adapter (WebKit)':'Chrome extension')+' passed: unchanged composer, /us intercept, fresh scene, exact Reel, own-video continuation, automatic native upload/send once each, one-tap Share → edited video, Original link, refresh without duplicate generation/delivery, no result card.');
+}catch(error){for(const p of browser.contexts().flatMap(c=>c.pages())){console.error(await p.evaluate(()=>({errors:window.fixtureState?.jobs?.map(j=>({status:j.status,error:j.error})),images:[...document.querySelector('us-setup')?.shadowRoot?.querySelectorAll('img')||[]].map(i=>({src:i.src,width:i.naturalWidth,complete:i.complete}))})));await p.screenshot({path:'artifacts/ios-extension-failure.png'})}throw error;}finally{await browser.close();await mock.close();}

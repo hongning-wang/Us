@@ -1,4 +1,4 @@
-import type { Reference } from '../../../packages/shared/src/types';
+import type { Reference, Job } from '../../../packages/shared/src/types';
 import { conversationId, detectPair, directVideoUrl, messageArticles, stableMedia } from './instagram';
 
 /**
@@ -202,4 +202,16 @@ export async function activeReelReference(options: { entries?: ResourceEntryLike
  const url = await (options.fetchReel || fetchReelVideoUrl)(code);
  if (url) return { kind: 'reel', mediaId: code, url };
  throw Error('This Reel’s video could not be read. Try another Reel.');
+}
+
+/** Follow continuations back to the original Reel, never to the expiring CDN URL. */
+export function originalReelUrl(job:Job,jobs:Job[]):string|undefined {
+ const seen=new Set<string>();let current:Job|undefined=job;
+ while(current&&!seen.has(current.id)){
+  seen.add(current.id);
+  const reference:Reference|undefined=current.reference;
+  if(reference?.kind==='reel'&&/^[A-Za-z0-9_-]{5,16}$/.test(reference.mediaId))return 'https://www.instagram.com/reel/'+reference.mediaId+'/';
+  const parent:string|undefined=current.parentId||reference?.parentJobId;
+  current=parent?jobs.find(j=>j.id===parent):undefined;
+ }
 }

@@ -87,7 +87,7 @@ export function handle(e: unknown): Response {
 
 // ---- CORS ----------------------------------------------------------------
 
-const STATIC_ORIGINS = new Set(['https://www.instagram.com', 'https://instagram.com']);
+const STATIC_ORIGINS = new Set(['capacitor://localhost', 'https://www.instagram.com', 'https://instagram.com']);
 
 export function allowedOrigin(origin: string | null): string | null {
 	if (!origin) return null;

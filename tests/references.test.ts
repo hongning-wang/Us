@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {parseHTML} from 'linkedom';
-import {activeReelReference,captureReplyReference,ownVideoMessageId,parseReelVideoUrl,referenceFor,resolveReference,resolveVisibleReference,videoTracks} from '../apps/extension/src/references';
+import {originalReelUrl,activeReelReference,captureReplyReference,ownVideoMessageId,parseReelVideoUrl,referenceFor,resolveReference,resolveVisibleReference,videoTracks} from '../apps/extension/src/references';
 
 const PLAY='<img src="https://static.cdninstagram.com/rsrc.php/yb/r/playButton.png" width="24">';
 const POSTER='https://scontent-bos5-1.cdninstagram.com/v/t15.3394-10/739762567_270902703506743.jpg?ig_cache_key=abc.def';
@@ -126,4 +126,13 @@ test('media info requires the selected id and rejects unsupported videos before 
  assert.equal(videoUrlFromMediaInfo({items:[item]},'1111111111111111111'),undefined);
  assert.throws(()=>videoUrlFromMediaInfo({items:[{...item,video_duration:31}]},'3955307914729904366'),/2 and 30 seconds/);
  assert.throws(()=>videoUrlFromMediaInfo({items:[{...item,video_versions:[{...item.video_versions[0],width:200}]}]},'3955307914729904366'),/size is not supported/);
+});
+
+test('Original links survive continuation chains without linking unrelated or cyclic stories',()=>{
+ const original={id:'root',reference:{kind:'reel',mediaId:'ABC123xyz',url:'https://cdninstagram.com/expiring.mp4'}} as any;
+ const continuation={id:'next',parentId:'root',reference:{kind:'video',parentJobId:'root'}} as any;
+ const fresh={id:'fresh'} as any;
+ assert.equal(originalReelUrl(continuation,[original,continuation]),'https://www.instagram.com/reel/ABC123xyz/');
+ assert.equal(originalReelUrl(fresh,[original,fresh]),undefined);
+ assert.equal(originalReelUrl({id:'loop',parentId:'loop'} as any,[{id:'loop',parentId:'loop'} as any]),undefined);
 });

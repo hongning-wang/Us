@@ -9,14 +9,18 @@
   "scripts": {
     "dev": "npm run dev -w @us/web",
     "dev:extension": "npm run dev -w @us/extension",
-    "build": "npm run build -w @us/web && npm run build -w @us/extension",
-    "check": "npm run check -w @us/web && npm run check -w @us/extension",
+    "build": "npm run build -w @us/web && npm run build -w @us/extension && npm run build -w @us/mobile",
+    "check": "npm run check -w @us/web && npm run check -w @us/extension && npm run check -w @us/mobile",
     "test": "NODE_ENV=test US_TEST_STORE=memory node --import tsx --test tests/*.test.ts",
     "dev:media": "node scripts/media-proxy.mjs",
     "dev:mock": "node scripts/mock-api.mjs",
     "test:e2e": "node scripts/test-native-flow.mjs && node scripts/test-history-sync.mjs",
     "db:migrate": "node --import tsx scripts/migrate-database.ts",
-    "test:database": "node --import tsx scripts/test-database.ts"
+    "test:database": "node --import tsx scripts/test-database.ts",
+    "dev:ios": "npm run dev -w @us/mobile",
+    "ios:sync": "npm run sync -w @us/mobile",
+    "ios:open": "npm run open -w @us/mobile",
+    "ios:run": "npm run run -w @us/mobile"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

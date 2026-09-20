@@ -4,6 +4,10 @@ Create personalized videos inside a two-person Instagram DM. A WXT/Svelte extens
 
 ## Run
 
+Once dependencies and `.env` are configured, start everything with `make run` (or just `make`). It starts the backend, browser app, media proxy and Cloudflare tunnel, automatically updates only `PUBLIC_MEDIA_BASE` in `.env`, then starts the backend with that URL. Open `http://localhost:5176` on this Mac (it redirects to real Instagram; load the Chrome extension first), or open the installed iPhone app on the same network. Keep the Mac awake and the terminal open; Ctrl+C stops all four services. The launcher uses `.tools/cloudflared` if present, otherwise `cloudflared` from your PATH. Stop any separately running services before using this command.
+
+For individual services or first-time setup:
+
 1. Use Node 22+, Chrome, and a signed-in Codex CLI. Run `npm install`.
 2. Copy `.env.example` to `.env` **only if `.env` does not already exist**. Set `HONCHO_API_KEY` and `SEEDANCE_API_KEY`. Keys stay on the server.
 3. Run `npm run dev` (127.0.0.1:5173). This also serves an interactive, fixture-only preview.
@@ -12,6 +16,30 @@ Create personalized videos inside a two-person Instagram DM. A WXT/Svelte extens
 6. For real generation, run `npm run dev:media` and expose **port 5174** through an HTTPS tunnel. For Cloudflare: `cloudflared tunnel --url http://127.0.0.1:5174`. Set `PUBLIC_MEDIA_BASE` to the printed HTTPS origin and restart `npm run dev`. The media proxy serves only `/api/media/:filename`; keep the application server local.
 
 The first text request imports up to **500 messages from the past three calendar months**, stopping at whichever boundary comes first (or the conversation beginning). Completed imports are reused across reloads, including chats with fewer than 500 messages; new visible messages sync incrementally with deduplication. `/us settings` → **Import more** retries incomplete imports. The collector reads message timestamps and native Instagram date separators; messages whose date cannot be established are skipped, and missing dates or stalled loading keep a partial import labeled incomplete. Reels and videos are excluded and do not count toward the cap. Text keeps slang and emoji while tracking parameters and temporary CDN links are removed. History ingestion does not download, transcribe, or visually analyze Reels. The 500-message cap limits the initial backfill, not the lifetime count as new messages arrive. Existing Honcho memories are not retroactively deleted by the cutoff. **Reset memory** starts a fresh pair session for a clean reimport; it does not delete the old remote session, photos, jobs, or sent messages.
+
+## iOS (standalone Instagram wrapper)
+
+The iPhone app opens the real Instagram website. Sign into Instagram, open any one-to-one DM, and use `/us`, Reel personalization and continuation in Instagram’s existing interface. The native target bundles the same extension content script, shared photo panel, chat/history detection and delivery logic used on Chrome. There is no separate chat screen or preset recipient.
+
+```sh
+make run          # Mac backend, media proxy/tunnel, desktop Instagram launcher
+# In another terminal, install/update the iPhone build:
+npm run ios:sync
+npm run ios:open
+```
+
+In Xcode, choose your Apple signing team and connected iPhone, enable Developer Mode on the phone, then Run. The phone must be on a network that can reach the Mac. Allow local-network access when prompted and keep the Mac awake. The app stores its own Instagram login session; it does not inherit the login from Meta’s native app or Chrome.
+
+`apps/mobile/.env.local` can set `VITE_US_API_BASE=http://your-mac.local:5173`; otherwise the build uses this Mac’s hostname. Run `ios:sync` after changing the address. No account or conversation ID belongs in this configuration. Codex and provider credentials stay on the Mac.
+
+The existing Capacitor Xcode project hosts a WKWebView. The extension runs in an isolated JavaScript world; a narrow native adapter handles its storage and backend requests. Instagram’s page has no access to Capacitor plugins or the native bridge. Photo suggestions use the current Instagram session, with the existing upload fallback if suggestions are unavailable.
+
+```sh
+US_IOS=1 node scripts/test-native-flow.mjs  # actual iOS JS bundle, WebKit, mock backend
+npm run test:e2e                          # Chrome extension regression checks
+```
+
+The iOS script tests cover the original composer, text/Reel/continuation requests, video-byte attachment, account/chat switching, photo confirmation and reload recovery. Real signed-in Instagram behavior on a physical phone still needs device verification; mocks do not prove Instagram’s live mobile DOM or upload behavior.
 
 ## Demo
 
@@ -23,7 +51,7 @@ The backend uses Supabase Postgres with eleven relational tables in the **public
 
 Set `DATABASE_URL` and run `npm run db:migrate` before starting the backend. TLS certificate verification is enabled. Postgres is required for normal operation—there is no local JSON storage fallback. Tests use an explicitly selected in-memory test store and mocked generation APIs.
 
-Us reads the logged-in identity and current chat from Instagram. Photos belong to that account; history and jobs are scoped to account + chat. In a Reel share dialog, select one person and choose **Make this us** beside Instagram's Send button. Optional text in the share message field becomes the instruction in that person's DM. Press Enter to generate; no recipient is fixed in code.
+Us reads the logged-in identity and current chat from Instagram. Photos belong to that account; history and jobs are scoped to account + chat. In a Reel share dialog, select one person and tap **Make this us**. The selected Reel and optional message become a saved generation request; the destination DM generates and sends the edited video automatically, without another Send or Enter. First-time photo confirmation still applies. Edited videos include an **Original** link to the source Reel, including continuations. No recipient is fixed in code.
 
 ## Running it on another computer
 
