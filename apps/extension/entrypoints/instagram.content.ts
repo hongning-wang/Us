@@ -130,6 +130,8 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
   const button=(event.target as HTMLElement).closest('[role=button],button');return /^Send$/i.test(button?.getAttribute('aria-label')||button?.textContent?.trim()||'');
  }
  function intercept(event:Event){
+  // Instagram can keep a DM composer mounted behind a Reel/share dialog.
+  if(!conversationId()||(event.target as HTMLElement).closest('[role=dialog]'))return;
   if(!isSend(event))return;
   if(nativeSending){if(event.isTrusted){event.preventDefault();event.stopImmediatePropagation();}return;}
   const editor=composer();if(!editor)return;
@@ -173,7 +175,8 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
   if(currentPair){const key=currentPair.sender.id+':'+currentPair.conversationId;if(restoredContext!==key){restoredContext=key;void restoreChat().catch(e=>show((e as Error).message,[],true));}}
   for(const dialog of document.querySelectorAll<HTMLElement>('[role=dialog]')){
    if(!/^\/(?:reels?|p)\/[^/]+/.test(location.pathname))continue;
-   const send=shareSendButton(dialog);if(!send)continue;
+   const send=shareSendButton(dialog);
+   if(!send&&!(dialog.querySelector('input[name="queryBox"]')&&[...dialog.querySelectorAll('h1,h2')].some(e=>e.textContent?.trim()==='Share')))continue;
    let button=dialog.querySelector<HTMLButtonElement>('[data-us-action="share"]');
    if(!button){
     button=document.createElement('button');button.dataset.usAction='share';actionContent(button,'share');
@@ -192,9 +195,11 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
       location.href='/direct/t/'+encodeURIComponent(pair.conversationId)+'/';
      }catch(e){action.textContent=(e as Error).message;delete action.dataset.busy;action.disabled=false;}
     };
-    // Insert inside the native footer, not after the modal's visual surface.
-    send.parentElement!.dataset.usShareFooter='';send.parentElement!.append(action);
    }
+   // Some Instagram sheets only show Send after choosing a recipient.
+   const standalone=dialog.querySelector<HTMLElement>('[data-us-share-standalone]');
+   if(send){send.parentElement!.dataset.usShareFooter='';if(button.parentElement!==send.parentElement)send.parentElement!.append(button);standalone?.remove();}
+   else if(!standalone){const footer=document.createElement('div');footer.dataset.usShareStandalone='';footer.append(button);const heading=dialog.querySelector('h1,h2');(heading?.parentElement?.parentElement||dialog).append(footer);}
    if(!button.dataset.busy){button.disabled=selectedShareTiles(dialog).length!==1;button.title=button.disabled?'Choose one person':'';}
   }
  }
@@ -220,5 +225,5 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
   show('Your photo is saved · '+memoryLabel,[['Settings',()=>openSetup(pair,true)]],true);
  }
 
- ctx.onInvalidated(()=>{clearInterval(interval);clearInterval(syncInterval);document.removeEventListener('click',captureReply,true);window.removeEventListener('keydown',intercept,true);window.removeEventListener('click',intercept,true);document.querySelectorAll('[data-us-action],[data-us-actions]').forEach(e=>e.remove());document.querySelectorAll('[data-us-share-footer]').forEach(e=>e.removeAttribute('data-us-share-footer'));status.remove();generation.remove();style.remove();closePanel();ui.remove();});
+ ctx.onInvalidated(()=>{clearInterval(interval);clearInterval(syncInterval);document.removeEventListener('click',captureReply,true);window.removeEventListener('keydown',intercept,true);window.removeEventListener('click',intercept,true);document.querySelectorAll('[data-us-action],[data-us-actions],[data-us-share-standalone]').forEach(e=>e.remove());document.querySelectorAll('[data-us-share-footer]').forEach(e=>e.removeAttribute('data-us-share-footer'));status.remove();generation.remove();style.remove();closePanel();ui.remove();});
 }});
