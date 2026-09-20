@@ -82,7 +82,7 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
    let setup=await bridge.getSetup();if(!setup.pair)setup=await bridge.configure(captured);
    if(!setup.photoConfirmed){openSetup(captured);show('Confirm your photo once to get started.',[['Add photo',()=>openSetup(captured)]],true);return;}
    const friendChoiceKey='us:friend-photo-reviewed:'+captured.sender.id+':'+captured.conversationId;
-   if(!setup.recipientPhotoConfirmed&&!(await browser.storage.local.get(friendChoiceKey))[friendChoiceKey]){openSetup(captured,false,captured.recipient.id);return;}
+   if(!captured.autoShare&&!setup.recipientPhotoConfirmed&&!(await browser.storage.local.get(friendChoiceKey))[friendChoiceKey]){openSetup(captured,false,captured.recipient.id);return;}
    const historyKey=captured.sender.id+':'+captured.conversationId;
    // A partial import is still saved memory. Do not rescan it for each video.
    if(!captured.reference&&!historyChecked.has(historyKey)&&!setup.importComplete&&setup.importedCount===0){showGeneration('Reading chat history…');setup=await bridge.importHistory();historyChecked.add(historyKey);}
@@ -172,7 +172,7 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
   attachStatus();
   if(currentPair){const key=currentPair.sender.id+':'+currentPair.conversationId;if(restoredContext!==key){restoredContext=key;void restoreChat().catch(e=>show((e as Error).message,[],true));}}
   for(const dialog of document.querySelectorAll<HTMLElement>('[role=dialog]')){
-   if(!/^\/reels?\/[^/]+/.test(location.pathname))continue;
+   if(!/^\/(?:reels?|p)\/[^/]+/.test(location.pathname))continue;
    const send=shareSendButton(dialog);if(!send)continue;
    let button=dialog.querySelector<HTMLButtonElement>('[data-us-action="share"]');
    if(!button){

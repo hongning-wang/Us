@@ -197,7 +197,7 @@ export async function resolveVisibleReference(article: HTMLElement, sender?: { u
 
 /** Resolve only the Reel identified by its permalink. Page-wide playback is not proof of selection. */
 export async function activeReelReference(options: { entries?: ResourceEntryLike[]; now?: number; windowMs?: number; fetchReel?: (shortcode: string) => Promise<string | undefined> } = {}): Promise<Reference> {
- const code = location.pathname.match(/\/reels?\/([^/?]+)/)?.[1];
+ const code = location.pathname.match(/\/(?:reels?|p)\/([^/?]+)/)?.[1];
  if (!code) throw Error('Open this Reel on its own, then try Make this us.');
  const url = await (options.fetchReel || fetchReelVideoUrl)(code);
  if (url) return { kind: 'reel', mediaId: code, url };

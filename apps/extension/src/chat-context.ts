@@ -5,16 +5,22 @@ type InboxUser={username:string;full_name?:string;profile_pic_url?:string};
 type InboxThread={thread_v2_id:string;thread_title?:string;users:InboxUser[]};
 type InboxPage={viewer:InboxUser;inbox:{threads:InboxThread[];oldest_cursor?:string;has_older?:boolean}};
 export function selectedShareTiles(dialog:HTMLElement):HTMLElement[]{
- return [...dialog.querySelectorAll<HTMLElement>('[role=button],button,[role=checkbox],[role=option]')].filter(e=>!e.dataset.usAction&&e.querySelector('img')&&(e.getAttribute('aria-checked')==='true'||e.getAttribute('aria-selected')==='true'||e.querySelector('svg[aria-label="Checkmark filled icon"]')));
+ const tiles=[...dialog.querySelectorAll<HTMLElement>('[role=button],button,[role=checkbox],[role=option]')].filter(e=>!e.dataset.usAction&&e.querySelector('img')&&(e.getAttribute('aria-checked')==='true'||e.getAttribute('aria-selected')==='true'||e.querySelector('svg[aria-label="Checkmark filled icon"]')));
+ for(const checkbox of dialog.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked')){
+  let row=checkbox.parentElement;
+  while(row&&row!==dialog&&!row.querySelector('img'))row=row.parentElement;
+  if(row&&row!==dialog&&row.querySelectorAll('input[type=checkbox]').length===1&&!tiles.some(tile=>tile.contains(row)||row.contains(tile)))tiles.push(row);
+ }
+ return tiles;
 }
 export function shareSendButton(dialog:HTMLElement):HTMLElement|undefined {
  return [...dialog.querySelectorAll<HTMLElement>('[role=button],button')].find(e=>!e.dataset.usAction&&e.innerText.trim()==='Send');
 }
 const person=(u:InboxUser):Participant=>({id:u.username,username:u.username,name:u.full_name||u.username});
 export function matchShareThread(page:InboxPage,tile:HTMLElement):Pair|undefined{
- const label=tile.innerText.trim();
+ const labels=tile.innerText.split('\n').map(s=>s.trim()).filter(Boolean);
  const avatars=[...tile.querySelectorAll<HTMLImageElement>('img')].map(i=>stableMedia(i.src));
- const matches=page.inbox.threads.filter(t=>t.users.length===1&&t.users[0]!.profile_pic_url&&avatars.includes(stableMedia(t.users[0]!.profile_pic_url))&&[t.thread_title,t.users[0]!.full_name,t.users[0]!.username].includes(label));
+ const matches=page.inbox.threads.filter(t=>t.users.length===1&&t.users[0]!.profile_pic_url&&avatars.includes(stableMedia(t.users[0]!.profile_pic_url))&&[t.thread_title,t.users[0]!.full_name,t.users[0]!.username].some(label=>label&&labels.includes(label)));
  if(matches.length!==1)return;
  const thread=matches[0]!;if(!/^\d+$/.test(String(thread.thread_v2_id)))return;
  return {conversationId:String(thread.thread_v2_id),sender:person(page.viewer),recipient:person(thread.users[0]!)};
@@ -36,5 +42,5 @@ export async function resolveSharePair(dialog:HTMLElement):Promise<Pair>{
   const pair=matchShareThread(data,tile);if(pair)return pair;
   if(!data.inbox.has_older||!data.inbox.oldest_cursor)break;cursor=data.inbox.oldest_cursor;
  }
- throw Error('Open your one-to-one chat with this person, then use /us on the shared Reel.');
+ throw Error('Could not match the selected chat. Choose the person again and retry.');
 }
