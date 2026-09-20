@@ -84,7 +84,8 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
    const friendChoiceKey='us:friend-photo-reviewed:'+captured.sender.id+':'+captured.conversationId;
    if(!setup.recipientPhotoConfirmed&&!(await browser.storage.local.get(friendChoiceKey))[friendChoiceKey]){openSetup(captured,false,captured.recipient.id);return;}
    const historyKey=captured.sender.id+':'+captured.conversationId;
-   if(!captured.reference&&!historyChecked.has(historyKey)&&!setup.importComplete){showGeneration('Reading chat history…');setup=await bridge.importHistory();if(setup.importComplete)historyChecked.add(historyKey);}
+   // A partial import is still saved memory. Do not rescan it for each video.
+   if(!captured.reference&&!historyChecked.has(historyKey)&&!setup.importComplete&&setup.importedCount===0){showGeneration('Reading chat history…');setup=await bridge.importHistory();historyChecked.add(historyKey);}
    if(captured.reference&&(!captured.reference.url||captured.reference.url.startsWith('blob:')||/instagram\.com\/(reels?|p)\//.test(captured.reference.url))){
     const messageId=captured.reference.messageId;
     const parent=messageId?(await bridge.listJobs()).find(j=>j.deliveryMessageId===messageId&&j.outputUrl):undefined;
