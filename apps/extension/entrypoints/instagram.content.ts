@@ -7,7 +7,7 @@ import {resolveSharePair,selectedShareTiles,shareSendButton} from '../src/chat-c
 import {actionContent,buttonStyles} from '../src/buttons';
 import {originalReelUrl,ownVideoMessageId} from '../src/references';
 import {createBridge,observeMessages} from '../src/bridge';
-import {detectPair,composer,conversationId,scrollContainer,messageArticles,referenceFor,captureReplyReference,resolveReference,activeReelReference,fetchReelVideoUrl,type CapturedReference} from '../src/instagram';
+import {detectPair,composer,conversationId,scrollContainer,messageArticles,referenceFor,captureReplyReference,resolveReference,fetchReelVideoUrl,type CapturedReference} from '../src/instagram';
 import type {Pair,Reference,Job,CreateJob} from '../../../packages/shared/src/types';
 
 export default defineContentScript({matches:['https://www.instagram.com/*'],cssInjectionMode:'ui',async main(ctx){
@@ -45,11 +45,13 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
  }
  function attachStatus(){const row=composer()?.parentElement?.parentElement;if(!row)return;const rect=row.getBoundingClientRect();if(!status.isConnected)document.body.append(status);status.style.left=(rect.left+16)+'px';status.style.top=Math.max(0,rect.top-23)+'px';status.style.maxWidth=Math.max(120,rect.width-32)+'px';}
  function showGeneration(label:string){
-  const articles=messageArticles(),last=articles.at(-1),first=articles[0];if(!last)return;
+  generationLabel.textContent=label;status.hidden=true;
+  const fallback=()=>{const row=composer()?.parentElement?.parentElement;if(row&&generation.nextElementSibling!==row)row.before(generation);};
+  const articles=messageArticles(),last=articles.at(-1),first=articles[0];if(!last){fallback();return;}
   let anchor=last.closest<HTMLElement>('[role=group][tabindex="-1"]')||last;
   let parent=anchor.parentElement;
   while(parent&&first&&!parent.contains(first)){anchor=parent;parent=parent.parentElement;}
-  if(!parent||parent===document.body||parent.contains(composer()))return;
+  if(!parent||parent===document.body||parent.contains(composer())){fallback();return;}
   const scroll=scrollContainer();const nearBottom=scroll&&(Math.abs(scroll.scrollTop)<100||!generation.isConnected);
   const thread=scroll?.firstElementChild;
   if(thread&&thread.contains(last)){
@@ -79,8 +81,9 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
   const captured=request;const bridge=createBridge(captured);
   try{
    if(conversationId()!==captured.conversationId)throw Error('Return to the original chat to create this video.');
+   if(captured.autoShare)showGeneration('Generating…');
    let setup=await bridge.getSetup();if(!setup.pair)setup=await bridge.configure(captured);
-   if(!setup.photoConfirmed){openSetup(captured);show('Confirm your photo once to get started.',[['Add photo',()=>openSetup(captured)]],true);return;}
+   if(!setup.photoConfirmed){generation.remove();openSetup(captured);show('Confirm your photo once to get started.',[['Add photo',()=>openSetup(captured)]],true);return;}
    const friendChoiceKey='us:friend-photo-reviewed:'+captured.sender.id+':'+captured.conversationId;
    if(!captured.autoShare&&!setup.recipientPhotoConfirmed&&!(await browser.storage.local.get(friendChoiceKey))[friendChoiceKey]){openSetup(captured,false,captured.recipient.id);return;}
    const historyKey=captured.sender.id+':'+captured.conversationId;
@@ -172,6 +175,7 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
    actionsFor(article).append(button);
   }
   attachStatus();
+  if(submitting&&request?.autoShare&&!panel)showGeneration('Generating…');
   if(currentPair){const key=currentPair.sender.id+':'+currentPair.conversationId;if(restoredContext!==key){restoredContext=key;void restoreChat().catch(e=>show((e as Error).message,[],true));}}
   for(const dialog of document.querySelectorAll<HTMLElement>('[role=dialog]')){
    if(!/^\/(?:reels?|p)\/[^/]+/.test(location.pathname))continue;
@@ -184,16 +188,20 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
     action.onclick=async(event)=>{
      event.preventDefault();event.stopPropagation();
      if(action.dataset.busy)return;action.dataset.busy='true';action.disabled=true;
+     dialog.querySelector('[data-us-share-error]')?.remove();
+     action.querySelector('span')!.textContent='Opening chat…';
      const selectedName=selectedShareTiles(dialog)[0]?.innerText;const reelPath=location.pathname;
      try{
       const pair=await resolveSharePair(dialog);
-      const reference=await activeReelReference();
+      const code=reelPath.match(/^\/(?:reels?|p)\/([^/?]+)/)?.[1];
+      if(!code)throw Error('Open the Reel and try again.');
+      const reference:Reference={kind:'reel',mediaId:code,url:'https://www.instagram.com/reel/'+code+'/'};
       if(location.pathname!==reelPath||selectedShareTiles(dialog).length!==1||selectedShareTiles(dialog)[0]?.innerText!==selectedName)throw Error('Selection changed. Tap Make this us again.');
       const instruction=dialog.querySelector<HTMLInputElement>('input[name="shareCommentText"]')?.value.trim()||'Make this us';
       const selected:PendingRequest={...pair,reference,instruction,idempotencyKey:crypto.randomUUID(),autoShare:true};
       await browser.storage.local.set({['us:request:'+pair.sender.id+':'+pair.conversationId]:selected});
       location.href='/direct/t/'+encodeURIComponent(pair.conversationId)+'/';
-     }catch(e){action.textContent=(e as Error).message;delete action.dataset.busy;action.disabled=false;}
+     }catch(e){actionContent(action,'share');action.title=(e as Error).message;let error=dialog.querySelector<HTMLElement>('[data-us-share-error]');if(!error){error=document.createElement('div');error.dataset.usShareError='';error.setAttribute('role','alert');action.parentElement?.append(error);}error.textContent=(e as Error).message;delete action.dataset.busy;action.disabled=false;}
     };
    }
    // Some Instagram sheets only show Send after choosing a recipient.
@@ -206,7 +214,7 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
  async function poll(){
   if(polling||submitting||!currentPair||conversationId()!==currentPair.conversationId)return;polling=true;
   const pair=currentPair;
-  try{const jobs=await createBridge(pair).listJobs();if(conversationId()!==pair.conversationId)return;knownJobs=jobs;const next=active?jobs.find(j=>j.id===active?.id):jobs.find(j=>j.status!=='sent'&&!dismissed.has(j.id));if(next){active=next;renderJob()}}catch{}finally{polling=false}
+  try{const jobs=await createBridge(pair).listJobs();if(conversationId()!==pair.conversationId||submitting||request)return;knownJobs=jobs;const next=active?jobs.find(j=>j.id===active?.id):jobs.find(j=>j.status!=='sent'&&!dismissed.has(j.id));if(next){active=next;renderJob()}}catch{}finally{polling=false}
  }
  const interval=setInterval(()=>{scan();void poll()},2000);let syncing=false;
  const syncInterval=setInterval(async()=>{if(!currentPair||syncing)return;syncing=true;try{await observeMessages(currentPair)}catch{}finally{syncing=false}},8000);
@@ -225,5 +233,5 @@ export default defineContentScript({matches:['https://www.instagram.com/*'],cssI
   show('Your photo is saved · '+memoryLabel,[['Settings',()=>openSetup(pair,true)]],true);
  }
 
- ctx.onInvalidated(()=>{clearInterval(interval);clearInterval(syncInterval);document.removeEventListener('click',captureReply,true);window.removeEventListener('keydown',intercept,true);window.removeEventListener('click',intercept,true);document.querySelectorAll('[data-us-action],[data-us-actions],[data-us-share-standalone]').forEach(e=>e.remove());document.querySelectorAll('[data-us-share-footer]').forEach(e=>e.removeAttribute('data-us-share-footer'));status.remove();generation.remove();style.remove();closePanel();ui.remove();});
+ ctx.onInvalidated(()=>{clearInterval(interval);clearInterval(syncInterval);document.removeEventListener('click',captureReply,true);window.removeEventListener('keydown',intercept,true);window.removeEventListener('click',intercept,true);document.querySelectorAll('[data-us-action],[data-us-actions],[data-us-share-standalone],[data-us-share-error]').forEach(e=>e.remove());document.querySelectorAll('[data-us-share-footer]').forEach(e=>e.removeAttribute('data-us-share-footer'));status.remove();generation.remove();style.remove();closePanel();ui.remove();});
 }});
